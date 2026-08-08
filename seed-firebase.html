@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Seed Firebase – RA Perfumes</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: #eee; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; }
+    h1 { font-size: 1.4rem; margin-bottom: 8px; color: #f0c040; }
+    p  { font-size: .9rem; color: #aaa; margin-bottom: 24px; text-align: center; max-width: 480px; }
+    #btn { padding: 14px 36px; background: #f0c040; color: #000; font-size: 1rem; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; transition: opacity .2s; }
+    #btn:disabled { opacity: .45; cursor: not-allowed; }
+    #log  { margin-top: 24px; width: 100%; max-width: 540px; background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 16px; font-size: .8rem; font-family: monospace; max-height: 360px; overflow-y: auto; }
+    .ok   { color: #4caf50; }
+    .err  { color: #f44336; }
+    .info { color: #90caf9; }
+  </style>
+</head>
+<body>
+
+<h1>🔥 Seed de Produtos – RA Perfumes</h1>
+<p>Clique no botão abaixo para enviar todos os produtos, categorias e o cupom ao Firestore do Firebase. Execute <strong>apenas uma vez</strong>. Se rodar novamente, usará <code>set</code> com o mesmo ID (não duplica).</p>
+
+<button id="btn">🚀 Enviar Produtos ao Firebase</button>
+
+<div id="log"><span class="info">Aguardando…</span></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+<script>
+// TODO: preencher com as credenciais do Firebase deste projeto
+const firebaseConfig = {
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: ""
+};
+
+const produtos = [
+  { id: 1, nome: "Ferrari Black",           categoria: "masculinos", preco: 79.99,  imagem: "./assets/perfume-masculino.jpeg", descricao: "Ferrari  Black 125ml" },
+  { id: 2, nome: "Florata Oboticario",      categoria: "femininos",  preco: 89.99,  imagem: "./assets/perfume-feminino.jpeg",  descricao: "Perfume Feminino Florata Oboticario Romance de Verão" },
+  { id: 3, nome: "Perfume Calvin Klein",    categoria: "unissex",    preco: 95.99,  imagem: "./assets/perfume-unissex2.jpeg",  descricao: "Perfume Calvin Klein EveryOne Unissex EDT 100ML " },
+  { id: 4, nome: "Luxury Collection",       categoria: "unissex",    preco: 54.99,  imagem: "./assets/perfume-unissex.jpeg",   descricao: "Luxury Collection Amber Rouge Orientica Eau de Parfum - 80ml" },
+  { id: 5, nome: "Estante Para Perfumes",   categoria: "acessorios", preco: 32.99,  imagem: "./assets/perfume-acessorio.jpeg", descricao: "Estante Para Perfumes Expositor Lojas De Acessórios" },
+  { id: 6, nome: "Kit Eudora",              categoria: "kits",       preco: 140.99, imagem: "./assets/perfume-kit1.jpeg",      descricao: "Kit Presente Eudora Rouge" },
+  { id: 7, nome: "Kit Dream Brand",         categoria: "kits",       preco: 124.99, imagem: "./assets/perfume-kit2.jpeg",      descricao: "Kit Dream Brand Collection 02 men " },
+];
+
+const categorias = [
+  { id: "all",         nome: "Todos",       icone: "fa-border-all" },
+  { id: "masculinos",  nome: "Masculinos",  icone: "fa-mars" },
+  { id: "femininos",   nome: "Femininos",   icone: "fa-venus" },
+  { id: "unissex",     nome: "Unissex",     icone: "fa-venus-mars" },
+  { id: "acessorios",  nome: "Acessórios",  icone: "fa-pump-soap" },
+  { id: "kits",        nome: "Kits",        icone: "fa-gifts" },
+];
+
+const cupons = [
+  { docId: "DESCONTO10", codigo: "DESCONTO10", tipo: "percentual", valor: 10, valorMinimo: 0, validade: null, ativo: true },
+];
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+const log = document.getElementById("log");
+const btn = document.getElementById("btn");
+
+const addLog = (msg, tipo = "ok") => {
+  const span = document.createElement("span");
+  span.className = tipo;
+  span.textContent = msg;
+  log.appendChild(span);
+  log.appendChild(document.createElement("br"));
+  log.scrollTop = log.scrollHeight;
+};
+
+btn.addEventListener("click", async () => {
+  btn.disabled = true;
+  log.innerHTML = "";
+  addLog("▶ Iniciando envio...", "info");
+
+  let ok = 0, erros = 0;
+
+  for (const p of produtos) {
+    try {
+      await db.collection("produtos").doc(String(p.id)).set({
+        ...p,
+        ativo: true,
+        destaque: false,
+        criadoEm: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      addLog(`✔ [${p.id}] ${p.nome}`, "ok");
+      ok++;
+    } catch (e) {
+      addLog(`✘ [${p.id}] ${p.nome} — ${e.message}`, "err");
+      erros++;
+    }
+  }
+
+  addLog("", "info");
+  addLog("▶ Enviando categorias...", "info");
+  for (const c of categorias) {
+    try {
+      await db.collection("categorias").doc(c.id).set(c);
+      addLog(`✔ Categoria: ${c.nome}`, "ok");
+    } catch (e) {
+      addLog(`✘ Categoria: ${c.nome} — ${e.message}`, "err");
+      erros++;
+    }
+  }
+
+  addLog("", "info");
+  addLog("▶ Enviando cupons...", "info");
+  for (const c of cupons) {
+    try {
+      const { docId, ...dados } = c;
+      await db.collection("cupons").doc(docId).set(dados);
+      addLog(`✔ Cupom: ${c.codigo}`, "ok");
+    } catch (e) {
+      addLog(`✘ Cupom: ${c.codigo} — ${e.message}`, "err");
+      erros++;
+    }
+  }
+
+  addLog("", "info");
+  addLog(`━━━ CONCLUÍDO: ${ok} produtos enviados, ${erros} erros ━━━`, erros > 0 ? "err" : "info");
+  btn.disabled = false;
+});
+</script>
+</body>
+</html>
