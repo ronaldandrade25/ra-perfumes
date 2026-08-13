@@ -1,12 +1,12 @@
 // ─── FIREBASE CONFIG ──────────────────────────────────────────────────────────
 // TODO: preencher com as credenciais do Firebase deste projeto
 const firebaseConfig = {
-  apiKey: "AIzaSyC9teCzGMx_hVwGzYs-bu2PX8iT-blqRxQ",
-  authDomain: "catalogo-ac1a8.firebaseapp.com",
-  projectId: "catalogo-ac1a8",
-  storageBucket: "catalogo-ac1a8.firebasestorage.app",
-  messagingSenderId: "896893938942",
-  appId: "1:896893938942:web:0f517990771e57853989af"
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: ""
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
