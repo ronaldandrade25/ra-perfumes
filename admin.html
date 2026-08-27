@@ -124,6 +124,10 @@
     .progress-bar { display: none; margin-top: 8px; background: var(--border); border-radius: 999px; height: 6px; }
     .progress-fill { height: 6px; background: var(--gold); border-radius: 999px; width: 0%; transition: width .3s; }
     /* ── PDV ── */
+    .printer-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; margin-bottom: 16px; font-size: .85rem; }
+    .printer-status { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+    .printer-status.connected { color: #16a34a; }
+    .printer-status.connected strong { color: #16a34a; }
     .pdv-layout { display: grid; grid-template-columns: 1fr 380px; gap: 20px; align-items: start; }
     .pdv-products { min-width: 0; }
     .pdv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; max-height: 62vh; overflow-y: auto; margin-top: 14px; padding-right: 4px; }
@@ -253,6 +257,11 @@
         <div class="stat-card"><div class="num" id="pdv-stat-qtd">–</div><div class="lbl">Vendas hoje</div></div>
         <div class="stat-card"><div class="num" id="pdv-stat-total">–</div><div class="lbl">Total vendido hoje</div></div>
       </div>
+      <div class="printer-bar">
+        <span class="printer-status" id="printer-status"><i class="fa-solid fa-print"></i> Impressora: <strong id="printer-status-txt">desconectada</strong></span>
+        <button class="btn btn-ghost btn-sm" id="btn-conectar-impressora" onclick="conectarImpressora()"><i class="fa-brands fa-bluetooth-b"></i> Conectar impressora</button>
+        <button class="btn btn-ghost btn-sm" id="btn-desconectar-impressora" onclick="desconectarImpressora()" style="display:none"><i class="fa-solid fa-xmark"></i> Desconectar</button>
+      </div>
       <div class="pdv-layout">
         <div class="pdv-products">
           <input type="text" id="pdv-busca" placeholder="🔍 Buscar produto" oninput="renderPdvGrid()">
@@ -304,6 +313,7 @@
           <div id="pdv-split-resumo" style="display:none;flex-direction:column;gap:4px"></div>
           <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="pdvFinalizarVenda()"><i class="fa-solid fa-check"></i> Finalizar Venda</button>
           <button class="btn btn-ghost" style="width:100%;justify-content:center" onclick="pdvLimparCarrinho()"><i class="fa-solid fa-eraser"></i> Limpar carrinho</button>
+          <label class="toggle-row"><input type="checkbox" id="pdv-auto-imprimir" checked> Imprimir automaticamente ao finalizar</label>
         </div>
       </div>
       <div class="pdv-history">
@@ -994,6 +1004,157 @@ function confirmarExclusao(tipo, docId, nome) {
   abrirModal("confirm-modal");
 }
 
+// ── IMPRESSORA BLUETOOTH (ESC/POS) ──────────────────────────────────────────
+// Serviços GATT usados pela maioria das impressoras térmicas 58mm/80mm baratas.
+const IMPRESSORA_SERVICOS = [
+  "000018f0-0000-1000-8000-00805f9b34fb",
+  "49535343-fe7d-4ae5-8fa9-9fafd205e455",
+  "e7810a71-73ae-499d-8c15-faa9aef0c3f2"
+];
+let btDevice = null;
+let btCharacteristic = null;
+
+function atualizarStatusImpressora(conectado, nomeDispositivo) {
+  const badge   = document.getElementById("printer-status");
+  const txt     = document.getElementById("printer-status-txt");
+  const btnConn = document.getElementById("btn-conectar-impressora");
+  const btnDesc = document.getElementById("btn-desconectar-impressora");
+  if (conectado) {
+    badge.classList.add("connected");
+    txt.textContent = nomeDispositivo || "conectada";
+    btnConn.style.display = "none";
+    btnDesc.style.display = "inline-flex";
+  } else {
+    badge.classList.remove("connected");
+    txt.textContent = "desconectada";
+    btnConn.style.display = "inline-flex";
+    btnDesc.style.display = "none";
+  }
+}
+
+async function conectarImpressora() {
+  if (!navigator.bluetooth) {
+    toast("Este navegador não suporta Bluetooth. Use Chrome ou Edge (Android ou desktop).", "err");
+    return;
+  }
+  try {
+    btDevice = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: IMPRESSORA_SERVICOS
+    });
+    btDevice.addEventListener("gattserverdisconnected", () => {
+      btCharacteristic = null;
+      atualizarStatusImpressora(false);
+      toast("Impressora desconectada.", "err");
+    });
+    const server = await btDevice.gatt.connect();
+    let servicoEncontrado = null;
+    for (const uuid of IMPRESSORA_SERVICOS) {
+      try { servicoEncontrado = await server.getPrimaryService(uuid); break; } catch (e) { /* tenta o próximo */ }
+    }
+    if (!servicoEncontrado) {
+      const servicos = await server.getPrimaryServices();
+      for (const s of servicos) {
+        const chars = await s.getCharacteristics();
+        const gravavel = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+        if (gravavel) { btCharacteristic = gravavel; break; }
+      }
+    } else {
+      const chars = await servicoEncontrado.getCharacteristics();
+      btCharacteristic = chars.find(c => c.properties.write || c.properties.writeWithoutResponse) || chars[0];
+    }
+    if (!btCharacteristic) throw new Error("Não foi possível encontrar uma característica de escrita nesta impressora.");
+    atualizarStatusImpressora(true, btDevice.name || "impressora");
+    toast("Impressora conectada!", "ok");
+  } catch (e) {
+    if (e.name !== "NotFoundError") toast("Erro ao conectar impressora: " + e.message, "err");
+  }
+}
+
+function desconectarImpressora() {
+  if (btDevice && btDevice.gatt.connected) btDevice.gatt.disconnect();
+  btCharacteristic = null;
+  atualizarStatusImpressora(false);
+}
+
+async function enviarBytesImpressora(bytes) {
+  if (!btCharacteristic) throw new Error("Nenhuma impressora conectada.");
+  const CHUNK = 100;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    const pedaco = bytes.slice(i, i + CHUNK);
+    if (btCharacteristic.properties.writeWithoutResponse) {
+      await btCharacteristic.writeValueWithoutResponse(pedaco);
+    } else {
+      await btCharacteristic.writeValue(pedaco);
+    }
+    await new Promise(r => setTimeout(r, 20));
+  }
+}
+
+// Remove acentos, pois a maioria das impressoras térmicas baratas só imprime ASCII básico.
+function semAcento(txt) {
+  return String(txt || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+function gerarReciboESCPOS(venda, nomeLoja) {
+  const partes = [];
+  const push = arr => partes.push(...arr);
+  const texto = (linha) => { for (const ch of semAcento(linha)) push([ch.charCodeAt(0)]); push([0x0a]); };
+  const linhaSeparadora = () => texto("--------------------------------");
+
+  push([0x1b, 0x40]);             // inicializa
+  push([0x1b, 0x61, 0x01]);       // centralizado
+  push([0x1b, 0x45, 0x01]);       // negrito on
+  texto(nomeLoja || "RA Perfumes");
+  push([0x1b, 0x45, 0x00]);       // negrito off
+  const dt = venda.criadoEm?.toDate ? venda.criadoEm.toDate()
+    : (venda.criadoEm?.seconds ? new Date(venda.criadoEm.seconds * 1000) : new Date());
+  texto(dt.toLocaleDateString('pt-BR') + " " + dt.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}));
+  push([0x1b, 0x61, 0x00]);       // alinha esquerda
+  linhaSeparadora();
+
+  if (venda.cliente) texto("Cliente: " + venda.cliente);
+  (venda.itens || []).forEach(i => {
+    texto(`${i.qtd}x ${i.nome}`);
+    const totalItem = "R$ " + (i.preco * i.qtd).toFixed(2).replace('.', ',');
+    texto(`   ${i.preco.toFixed(2).replace('.', ',')} un.`.padEnd(20) + totalItem.padStart(12));
+  });
+  linhaSeparadora();
+  texto("Subtotal:".padEnd(20) + ("R$ " + Number(venda.subtotal || 0).toFixed(2).replace('.', ',')).padStart(12));
+  if (venda.desconto) texto("Desconto:".padEnd(20) + ("R$ " + Number(venda.desconto).toFixed(2).replace('.', ',')).padStart(12));
+  push([0x1b, 0x45, 0x01]);
+  texto("TOTAL:".padEnd(20) + ("R$ " + Number(venda.total || 0).toFixed(2).replace('.', ',')).padStart(12));
+  push([0x1b, 0x45, 0x00]);
+  linhaSeparadora();
+  const pagamentoTexto = Array.isArray(venda.pagamentos)
+    ? venda.pagamentos.map(p => `${PAG_LABEL[p.forma] || p.forma}: R$ ${Number(p.valor||0).toFixed(2).replace('.',',')}`).join("\n")
+    : (venda.pagamento || "");
+  pagamentoTexto.split("\n").forEach(l => texto(l));
+  if (venda.cupom) texto("Cupom: " + venda.cupom);
+  push([0x0a]);
+  push([0x1b, 0x61, 0x01]);
+  texto("Obrigado pela preferencia!");
+  push([0x0a, 0x0a, 0x0a]);
+  push([0x1d, 0x56, 0x01]);       // corte (parcial, se suportado)
+
+  return new Uint8Array(partes);
+}
+
+async function imprimirVenda(venda) {
+  if (!btCharacteristic) {
+    toast("Conecte a impressora bluetooth antes de imprimir.", "err");
+    return;
+  }
+  try {
+    const nomeLoja = document.getElementById("config-nome-loja")?.value || "RA Perfumes";
+    const bytes = gerarReciboESCPOS(venda, nomeLoja);
+    await enviarBytesImpressora(bytes);
+    toast("Cupom enviado para impressão.", "ok");
+  } catch (e) {
+    toast("Erro ao imprimir: " + e.message, "err");
+  }
+}
+
 // ── PDV ───────────────────────────────────────────────────────────────────
 let pdvCarrinho = [];       // [{ docId, nome, preco, qtd }]
 let pdvCupomAplicado = null;
@@ -1167,6 +1328,8 @@ async function pdvFinalizarVenda() {
   try {
     await db.collection("vendas").add(venda);
     toast("Venda finalizada com sucesso!", "ok");
+    const autoImprimir = document.getElementById("pdv-auto-imprimir").checked;
+    if (autoImprimir && btCharacteristic) await imprimirVenda(venda);
     pdvLimparCarrinho();
     await carregarVendasHoje();
   } catch(e) { toast("Erro ao finalizar venda: " + e.message, "err"); }
@@ -1204,7 +1367,10 @@ function linhaVenda(v, origem, comData) {
       <td style="max-width:260px"><span style="font-size:.8rem;color:var(--muted)">${itensResumo}</span></td>
       <td><span style="font-size:.8rem">${pagamentoTexto}</span></td>
       <td style="font-weight:700;color:var(--gold)">R$ ${Number(v.total||0).toFixed(2).replace('.',',')}</td>
-      <td><button class="btn btn-danger btn-sm" onclick="confirmarExclusaoVenda('${v.docId}','${origem}')" title="Excluir venda"><i class="fa-solid fa-trash"></i></button></td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-ghost btn-sm" onclick='imprimirVenda(${JSON.stringify(v).replace(/'/g,"&#39;")})' title="Reimprimir cupom"><i class="fa-solid fa-print"></i></button>
+        <button class="btn btn-danger btn-sm" onclick="confirmarExclusaoVenda('${v.docId}','${origem}')" title="Excluir venda"><i class="fa-solid fa-trash"></i></button>
+      </td>
     </tr>`;
 }
 
